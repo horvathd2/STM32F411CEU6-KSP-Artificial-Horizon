@@ -1,0 +1,17 @@
+../Core/Src/st7735s.c:13:13:write_cmd	1
+../Core/Src/st7735s.c:20:13:write_data	1
+../Core/Src/st7735s.c:27:13:write_data_buf	1
+../Core/Src/st7735s.c:34:13:cs_low	1
+../Core/Src/st7735s.c:38:13:cs_high	1
+../Core/Src/st7735s.c:64:11:st7735s_create	1
+../Core/Src/st7735s.c:79:13:run_init_sequence	4
+../Core/Src/st7735s.c:106:6:st7735s_init	1
+../Core/Src/st7735s.c:120:6:st7735s_set_addr_window	1
+../Core/Src/st7735s.c:141:6:st7735s_draw_pixel	1
+../Core/Src/st7735s.c:152:6:st7735s_fill_rect	2
+../Core/Src/st7735s.c:173:6:st7735s_fill_screen	1
+../Core/Src/st7735s.c:181:6:st7735s_draw_hline	3
+../Core/Src/st7735s.c:203:6:st7735s_draw_vline	3
+../Core/Src/st7735s.c:225:6:st7735s_push_framebuffer	1
+../Core/Src/st7735s.c:243:6:st7735s_draw_line	7
+../Core/Src/st7735s.c:276:6:st7735s_draw_circle	3
