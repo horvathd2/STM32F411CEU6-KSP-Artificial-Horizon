@@ -210,6 +210,7 @@ static inline void fb_set_pixel(int x, int y, uint16_t color)
 
 void fb_clear(uint16_t color)
 {
+	color = (color >> 8) | (color << 8);
     for (int i = 0; i < FB_WIDTH * FB_HEIGHT; i++)
         framebuffer[i] = color;
 }

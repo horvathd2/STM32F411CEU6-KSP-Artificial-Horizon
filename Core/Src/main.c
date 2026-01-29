@@ -43,6 +43,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_tx;
 
 UART_HandleTypeDef huart1;
 
@@ -53,6 +54,7 @@ UART_HandleTypeDef huart1;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
@@ -61,7 +63,7 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+st7735s_t lcd_obj;
 /* USER CODE END 0 */
 
 /**
@@ -93,13 +95,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  st7735s_t lcd_obj = st7735s_create(&hspi1,
- 		  	  	  	  	  	  		(GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
-									(GPIO_st7735s){LCD_RST_GPIO_Port, LCD_RST_Pin},
-									(GPIO_st7735s){SPI1_CS_GPIO_Port, SPI1_CS_Pin});
+  lcd_obj = st7735s_create(&hspi1,
+     		  	  	  	(GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
+    					(GPIO_st7735s){LCD_RST_GPIO_Port, LCD_RST_Pin},
+    					(GPIO_st7735s){SPI1_CS_GPIO_Port, SPI1_CS_Pin});
+
   st7735s_init(&lcd_obj);
   st7735s_fill_screen(&lcd_obj, 0x0000);
   /* USER CODE END 2 */
@@ -111,21 +115,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  //	pthread_mutex_lock(&uart_packet_mutex);
-	  //	pitch = uartMsg.pitch;
-	  //	roll = uartMsg.roll;
-	  //	yaw = uartMsg.yaw;
-	  //	pthread_mutex_unlock(&uart_packet_mutex);
+	//	pthread_mutex_lock(&uart_packet_mutex);
+	//	pitch = uartMsg.pitch;
+	//	roll = uartMsg.roll;
+	//	yaw = uartMsg.yaw;
+	//	pthread_mutex_unlock(&uart_packet_mutex);
 
-	  	int16_t pitch = 300 * sin(HAL_GetTick() / 10.0);
-	  	int16_t roll = 0;//4 * fsin(HAL_GetTick() / 12.0);
-	  	int16_t yaw = fmod(HAL_GetTick() / 20.0, 360);
+	float t = HAL_GetTick() / 1000.0f; // seconds
+	int16_t pitch = 30 * sinf(t);      // smaller angle
+	int16_t yaw   = fmodf(t*10, 360);
+	//int16_t pitch = 300 * sin(HAL_GetTick() / 10);
+	int16_t roll = 0;//4 * fsin(HAL_GetTick() / 12.0);
+	//int16_t yaw = fmod(HAL_GetTick() / 20, 360);
 
-	  	draw_navball(pitch, roll, yaw);
-	  	framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
-	  	st7735s_push_framebuffer(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
+	if(!lcd_obj.busy){
+		draw_navball(pitch, roll, yaw);
+		framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
+		st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
+	}
 
-	  	HAL_Delay(10);
+	HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -247,6 +256,22 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -264,17 +289,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, SPI1_CS_Pin|LCD_DC_Pin|LCD_RST_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PA6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SPI1_CS_Pin LCD_DC_Pin LCD_RST_Pin */
   GPIO_InitStruct.Pin = SPI1_CS_Pin|LCD_DC_Pin|LCD_RST_Pin;
@@ -289,7 +304,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi == lcd_obj.st7735s_spi) {
+    	st7735s_dma_tx_complete(&lcd_obj);
+    }
+}
 /* USER CODE END 4 */
 
 /**

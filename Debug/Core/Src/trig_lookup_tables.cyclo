@@ -3,7 +3,7 @@
 ../Core/Src/trig_lookup_tables.c:194:7:fcos	2
 ../Core/Src/trig_lookup_tables.c:201:20:fb_set_pixel	5
 ../Core/Src/trig_lookup_tables.c:211:6:fb_clear	2
-../Core/Src/trig_lookup_tables.c:217:11:horizon_get_framebuffer	1
-../Core/Src/trig_lookup_tables.c:222:13:rotate_vec	1
-../Core/Src/trig_lookup_tables.c:253:6:draw_navball	9
-../Core/Src/trig_lookup_tables.c:301:6:framebuffer_draw_circle	3
+../Core/Src/trig_lookup_tables.c:218:11:horizon_get_framebuffer	1
+../Core/Src/trig_lookup_tables.c:223:13:rotate_vec	1
+../Core/Src/trig_lookup_tables.c:254:6:draw_navball	9
+../Core/Src/trig_lookup_tables.c:302:6:framebuffer_draw_circle	3

@@ -27,6 +27,8 @@ typedef struct {
 	GPIO_st7735s st7735s_dc;
 	GPIO_st7735s st7735s_rst;
 	GPIO_st7735s st7735s_cs;
+
+	volatile uint8_t busy;
 } st7735s_t;
 
 st7735s_t st7735s_create(SPI_HandleTypeDef *lcd_spi,
@@ -51,16 +53,6 @@ void st7735s_fill_rect(st7735s_t *lcd,
 
 void st7735s_fill_screen(st7735s_t *lcd, uint16_t color);
 
-void st7735s_draw_hline(st7735s_t *lcd,
-					    int x, int y,
-                        int w,
-                        uint16_t color);
-
-void st7735s_draw_vline(st7735s_t *lcd,
-                        int x, int y,
-                        int h,
-                        uint16_t color);
-
 void st7735s_push_framebuffer(st7735s_t *lcd,
                               uint16_t *fb,
                               int w, int h);
@@ -73,5 +65,11 @@ void st7735s_draw_line(st7735s_t *lcd,
 void st7735s_draw_circle(st7735s_t *lcd, uint8_t radius,
                          uint16_t X0, uint16_t Y0,
                          uint16_t color);
+
+void st7735s_push_framebuffer_dma(st7735s_t *lcd,
+                                  uint16_t *fb,
+                                  int w, int h);
+
+void st7735s_dma_tx_complete(st7735s_t *lcd);
 
 #endif /* INC_ST7735S_H_ */

@@ -8,35 +8,37 @@
 #include "st7735s.h"
 #include "main.h"
 #include "stdlib.h"
-#include "malloc.h"
+
+static void cs_low(st7735s_t *lcd) {
+    HAL_GPIO_WritePin(lcd->st7735s_cs.gpio_port, lcd->st7735s_cs.gpio_pin, 0);
+}
+
+static void cs_high(st7735s_t *lcd) {
+    HAL_GPIO_WritePin(lcd->st7735s_cs.gpio_port, lcd->st7735s_cs.gpio_pin, 1);
+}
 
 static void write_cmd(st7735s_t *lcd, uint8_t cmd)
 {
-	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, GPIO_PIN_RESET);
+	cs_low(lcd);
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 0);
 	HAL_SPI_Transmit(lcd->st7735s_spi, &cmd, 1, HAL_MAX_DELAY);
-    //spi_write_chunked(&lcd->st7735s_spi, &cmd, 1);
+	cs_high(lcd);
 }
 
 static void write_data(st7735s_t *lcd, uint8_t data)
 {
-	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, GPIO_PIN_SET);
+	cs_low(lcd);
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
 	HAL_SPI_Transmit(lcd->st7735s_spi, &data, 1, HAL_MAX_DELAY);
-    //spi_write_chunked(&lcd->spi, &data, 1);
+	cs_high(lcd);
 }
 
 static void write_data_buf(st7735s_t *lcd, uint8_t *buf, size_t len)
 {
-	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, GPIO_PIN_SET);
+	cs_low(lcd);
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
 	HAL_SPI_Transmit(lcd->st7735s_spi, buf, len, HAL_MAX_DELAY);
-    //spi_write_chunked(&lcd->spi, buf, len);
-}
-
-static void cs_low(st7735s_t *lcd) {
-    HAL_GPIO_WritePin(lcd->st7735s_cs.gpio_port, lcd->st7735s_cs.gpio_pin, GPIO_PIN_RESET);
-}
-
-static void cs_high(st7735s_t *lcd) {
-    HAL_GPIO_WritePin(lcd->st7735s_cs.gpio_port, lcd->st7735s_cs.gpio_pin, GPIO_PIN_SET);
+	cs_high(lcd);
 }
 
 static const uint8_t init_seq[] = {
@@ -72,6 +74,7 @@ st7735s_t st7735s_create(SPI_HandleTypeDef *lcd_spi,
 	lcd.st7735s_dc = lcd_dc;
 	lcd.st7735s_rst = lcd_rst;
 	lcd.st7735s_cs = lcd_cs;
+	lcd.busy = 0;
 
 	return lcd;
 }
@@ -88,7 +91,6 @@ static void run_init_sequence(st7735s_t *lcd)
 
         if (count > 0) {
             uint8_t cmd = *p++;
-            cs_low(lcd);
             write_cmd(lcd, cmd);
 
             for (int i = 1; i < count; i++)
@@ -99,43 +101,67 @@ static void run_init_sequence(st7735s_t *lcd)
             HAL_Delay(ms);
         }
     }
-
-    cs_high(lcd);
 }
 
 void st7735s_init(st7735s_t *lcd)
 {
-	//HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
-
-	HAL_GPIO_WritePin(lcd->st7735s_rst.gpio_port, lcd->st7735s_rst.gpio_pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(lcd->st7735s_rst.gpio_port, lcd->st7735s_rst.gpio_pin, 0);
 	HAL_Delay(20);
-	HAL_GPIO_WritePin(lcd->st7735s_rst.gpio_port, lcd->st7735s_rst.gpio_pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(lcd->st7735s_rst.gpio_port, lcd->st7735s_rst.gpio_pin, 1);
 	HAL_Delay(20);
 
 	run_init_sequence(lcd);
-
-	//HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 0);
 }
 
 void st7735s_set_addr_window(st7735s_t *lcd,
 							 uint8_t x0, uint8_t y0,
                              uint8_t x1, uint8_t y1)
 {
+//    write_cmd(lcd, 0x2A); // CASET
+//    write_data(lcd, 0);
+//    write_data(lcd, x0 + ST7735S_X_OFFSET);
+//    write_data(lcd, 0);
+//    write_data(lcd, x1 + ST7735S_X_OFFSET);
+//
+//    write_cmd(lcd, 0x2B); // RASET
+//    write_data(lcd, 0);
+//    write_data(lcd, y0 + ST7735S_Y_OFFSET);
+//    write_data(lcd, 0);
+//    write_data(lcd, y1 + ST7735S_Y_OFFSET);
+//
+//    write_cmd(lcd, 0x2C); // RAMWR
+
 	cs_low(lcd);
-    write_cmd(lcd, 0x2A); // CASET
-    write_data(lcd, 0);
-    write_data(lcd, x0 + ST7735S_X_OFFSET);
-    write_data(lcd, 0);
-    write_data(lcd, x1 + ST7735S_X_OFFSET);
 
-    write_cmd(lcd, 0x2B); // RASET
-    write_data(lcd, 0);
-    write_data(lcd, y0 + ST7735S_Y_OFFSET);
-    write_data(lcd, 0);
-    write_data(lcd, y1 + ST7735S_Y_OFFSET);
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 0);
+	uint8_t cmd = 0x2A;
+	HAL_SPI_Transmit(lcd->st7735s_spi, &cmd, 1, HAL_MAX_DELAY);
 
-    write_cmd(lcd, 0x2C); // RAMWR
-    cs_high(lcd);
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
+	uint8_t data[] = {
+			0, x0 + ST7735S_X_OFFSET,
+			0, x1 + ST7735S_X_OFFSET
+	};
+	HAL_SPI_Transmit(lcd->st7735s_spi, data, sizeof(data), HAL_MAX_DELAY);
+
+	cs_high(lcd);
+
+	cs_low(lcd);
+
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 0);
+	uint8_t cmd2 = 0x2B;
+	HAL_SPI_Transmit(lcd->st7735s_spi, &cmd2, 1, HAL_MAX_DELAY);
+
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
+	uint8_t data2[] = {
+			0, y0 + ST7735S_Y_OFFSET,
+			0, y1 + ST7735S_Y_OFFSET
+	};
+	HAL_SPI_Transmit(lcd->st7735s_spi, data2, sizeof(data2), HAL_MAX_DELAY);
+
+	cs_high(lcd);
+
+	write_cmd(lcd, 0x2C); // RAMWR
 }
 
 void st7735s_draw_pixel(st7735s_t *lcd,
@@ -144,9 +170,7 @@ void st7735s_draw_pixel(st7735s_t *lcd,
 {
     st7735s_set_addr_window(lcd, x, y, x, y);
     uint8_t buf[2] = { color >> 8, color & 0xFF };
-    cs_low(lcd);
     write_data_buf(lcd, buf, 2);
-    cs_high(lcd);
 }
 
 void st7735s_fill_rect(st7735s_t *lcd,
@@ -154,20 +178,21 @@ void st7735s_fill_rect(st7735s_t *lcd,
                        uint8_t w, uint8_t h,
                        uint16_t color)
 {
+    uint8_t line[2 * w];
+
+    uint8_t hi = color >> 8;
+    uint8_t lo = color & 0xFF;
+
+    for (uint8_t i = 0; i < w; i++) {
+        line[2*i]     = hi;
+        line[2*i + 1] = lo;
+    }
+
     st7735s_set_addr_window(lcd, x, y, x + w - 1, y + h - 1);
 
-    size_t pixels = w * h;
-    size_t bytes = pixels * 2;
-
-    uint8_t *buf = malloc(bytes);
-    for (int i = 0; i < pixels; i++) {
-        buf[2*i]   = color >> 8;
-        buf[2*i+1] = color & 0xFF;
+    for (uint8_t row = 0; row < h; row++) {
+        write_data_buf(lcd, line, sizeof(line));
     }
-    cs_low(lcd);
-    write_data_buf(lcd, buf, bytes);
-    cs_high(lcd);
-    free(buf);
 }
 
 void st7735s_fill_screen(st7735s_t *lcd, uint16_t color)
@@ -178,50 +203,6 @@ void st7735s_fill_screen(st7735s_t *lcd, uint16_t color)
                       color);
 }
 
-void st7735s_draw_hline(st7735s_t *lcd,
-					    int x, int y,
-                        int w,
-                        uint16_t color)
-{
-    if (w < 0) {
-        x += w;
-        w = -w;
-    }
-
-    st7735s_set_addr_window(lcd, x, y, x + w - 1, y);
-    uint8_t buf[w * 2];
-
-    for (int i = 0; i < w; i++) {
-        buf[2*i]   = color >> 8;
-        buf[2*i+1] = color & 0xFF;
-    }
-    cs_low(lcd);
-    write_data_buf(lcd, buf, w * 2);
-    cs_high(lcd);
-}
-
-void st7735s_draw_vline(st7735s_t *lcd,
-                        int x, int y,
-                        int h,
-                        uint16_t color)
-{
-    if (h < 0) {
-        y += h;
-        h = -h;
-    }
-
-    st7735s_set_addr_window(lcd, x, y, x, y + h - 1);
-    uint8_t buf[h * 2];
-
-    for (int i = 0; i < h; i++) {
-        buf[2*i]   = color >> 8;
-        buf[2*i+1] = color & 0xFF;
-    }
-    cs_low(lcd);
-    write_data_buf(lcd, buf, h * 2);
-    cs_high(lcd);
-}
-
 void st7735s_push_framebuffer(st7735s_t *lcd,
                               uint16_t *fb,
                               int w, int h)
@@ -230,13 +211,11 @@ void st7735s_push_framebuffer(st7735s_t *lcd,
     st7735s_set_addr_window(lcd, 0, 0, w - 1, h - 1);
 
     // Data mode
-    //gpio_set(lcd->pin_dc, 1);
     HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
 
     // Send entire framebuffer in one big SPI write
-    //spi_write_chunked(&lcd->spi, (uint8_t*)fb,  w * h * sizeof(uint16_t));
     cs_low(lcd);
-    HAL_SPI_Transmit(lcd->st7735s_spi, (uint8_t*)fb, (w * h * sizeof(uint16_t)), HAL_MAX_DELAY);
+    HAL_SPI_Transmit(lcd->st7735s_spi, (uint8_t*)fb, (w * h * sizeof(uint16_t)), HAL_MAX_DELAY); // ADD DMA!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     cs_high(lcd);
 }
 
@@ -302,3 +281,25 @@ void st7735s_draw_circle(st7735s_t *lcd, uint8_t radius,
 	}
 }
 
+void st7735s_push_framebuffer_dma(st7735s_t *lcd,
+                                  uint16_t *fb,
+                                  int w, int h)
+{
+	if (lcd->busy) return;   // or block, or return error
+
+	lcd->busy = 1;
+
+	st7735s_set_addr_window(lcd, 0, 0, w - 1, h - 1);
+
+	HAL_GPIO_WritePin(lcd->st7735s_dc.gpio_port, lcd->st7735s_dc.gpio_pin, 1);
+
+	cs_low(lcd);
+
+	HAL_SPI_Transmit_DMA(lcd->st7735s_spi, (uint8_t *)fb, w * h * 2);
+}
+
+void st7735s_dma_tx_complete(st7735s_t *lcd)
+{
+    cs_high(lcd);
+    lcd->busy = 0;
+}
