@@ -49,4 +49,6 @@ void framebuffer_draw_circle(uint8_t rad,
                              uint16_t X0, uint16_t Y0,
                              uint16_t color);
 
+void navball_init_optimized(void);
+
 #endif /* INC_TRIG_LOOKUP_TABLES_H_ */

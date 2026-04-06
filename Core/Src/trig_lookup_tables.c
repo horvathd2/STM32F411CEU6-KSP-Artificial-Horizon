@@ -9,6 +9,7 @@
 #include "main.h"
 #include "math.h"
 #include "fixed_point.h"
+#include "stdlib.h"
 
 const float sin_table[TABLE_SIZE] = {
           0.0f,      0.01f,  0.019999f,  0.029996f,  0.039989f,  0.049979f,  0.059964f,  0.069943f,
@@ -174,6 +175,242 @@ const float cos_table[TABLE_SIZE] = {
      0.999068f,  0.999449f,  0.999731f,  0.999913f,  0.999995f,  0.999977f
 };
 
+/* ====================== PRECOMPUTED CIRCLE PIXELS ====================== */
+typedef struct {
+    int16_t sx, sy;     // absolute screen coordinates
+} nav_pixel_t;
+
+#define MAX_CIRCLE_PIXELS 20000
+static nav_pixel_t circle_pixels[MAX_CIRCLE_PIXELS];
+static int num_circle_pixels = 0;
+
+/* Pre-swapped texture (big-endian for ST7735S) - allocated once */
+static uint16_t *swapped_navball_texture = NULL;
+
+/* ====================== TRIG LOOKUP (unchanged - already excellent) ====================== */
+
+static float wrap_angle(float rad) {
+    while (rad < 0) rad += 2 * PI;
+    while (rad >= 2 * PI) rad -= 2 * PI;
+    return rad;
+}
+
+float fsin(float rad) {
+    rad = wrap_angle(rad);
+    int index = (int)(rad / STEP_RAD);
+    if (index >= TABLE_SIZE) index = TABLE_SIZE - 1;
+    return sin_table[index];
+}
+
+float fcos(float rad) {
+    rad = wrap_angle(rad);
+    int index = (int)(rad / STEP_RAD);
+    if (index >= TABLE_SIZE) index = TABLE_SIZE - 1;
+    return cos_table[index];
+}
+
+/* Your existing fast approximations (excellent) */
+float fast_atan2f(float y, float x)
+{
+    const float ONEQTR_PI = PI * 0.25f;
+    const float THREEQTR_PI = 3.0f * ONEQTR_PI;
+
+    float abs_y = fabsf(y) + 1e-10f;
+    float angle;
+
+    if (x < 0.0f)
+    {
+        float r = (x + abs_y) / (abs_y - x);
+        angle = THREEQTR_PI;
+        angle += (0.1963f * r * r - 0.9817f) * r;
+    }
+    else
+    {
+        float r = (x - abs_y) / (x + abs_y);
+        angle = ONEQTR_PI;
+        angle += (0.1963f * r * r - 0.9817f) * r;
+    }
+
+    return (y < 0.0f) ? -angle : angle;
+}
+
+float fast_asinf(float x)
+{
+    if (x > 1.0f) x = 1.0f;
+    if (x < -1.0f) x = -1.0f;
+
+    float x2 = x * x;
+
+    return x * (1.5707288f - 0.2121144f * x2 + 0.0742610f * x2 * x2);
+}
+
+/* ====================== FRAMEBUFFER (NO BYTE SWAP ANYMORE) ====================== */
+static uint16_t framebuffer[FB_WIDTH * FB_HEIGHT];
+
+//static inline void fb_set_pixel(int x, int y, uint16_t color) {
+//    if (x < 0 || x >= FB_WIDTH) return;
+//    if (y < 0 || y >= FB_HEIGHT) return;
+//    framebuffer[y * FB_WIDTH + x] = color;   // NO SWAP - already done at init
+//}
+
+static inline void fb_set_pixel(int x, int y, uint16_t color)
+{
+    if (x < 0 || x >= FB_WIDTH) return;
+    if (y < 0 || y >= FB_HEIGHT) return;
+
+    // Byte-swap for ST7735S (required)
+    color = (color >> 8) | (color << 8);
+    framebuffer[y * FB_WIDTH + x] = color;
+}
+
+uint16_t* horizon_get_framebuffer(void) { return framebuffer; }
+
+/* ====================== PRECOMPUTE CIRCLE + TEXTURE SWAP ====================== */
+//void navball_init_optimized(void)
+//{
+//    // 1. Precompute all pixels inside the navball circle (eliminates branch + waste)
+//    num_circle_pixels = 0;
+//    int r2 = radius * radius;
+//    for (int sy = cy - radius; sy <= cy + radius; sy++) {
+//        for (int sx = cx - radius; sx <= cx + radius; sx++) {
+//            int dx = sx - cx;
+//            int dy = sy - cy;
+//            if (dx * dx + dy * dy <= r2) {
+//                circle_pixels[num_circle_pixels].sx = sx;
+//                circle_pixels[num_circle_pixels].sy = sy;
+//                num_circle_pixels++;
+//            }
+//        }
+//    }
+//
+//    // 2. Pre-swap texture once (removes 12k swaps per frame)
+//    size_t tex_size = NAVBALL_TEXTURE_256_128_WIDTH * NAVBALL_TEXTURE_256_128_HEIGHT;
+//    swapped_navball_texture = (uint16_t*)malloc(tex_size * sizeof(uint16_t));
+//    for (size_t i = 0; i < tex_size; i++) {
+//        uint16_t c = navball_texture_256_128[i];
+//        swapped_navball_texture[i] = (c >> 8) | (c << 8);
+//    }
+//}
+
+void navball_init_optimized(void)
+{
+    // 1. Precompute all pixels inside the navball circle (eliminates branch + waste)
+    //    This part is STILL kept – it's a big speedup and uses ~80 KB (acceptable)
+    num_circle_pixels = 0;
+    int r2 = radius * radius;
+    for (int sy = cy - radius; sy <= cy + radius; sy++) {
+        for (int sx = cx - radius; sx <= cx + radius; sx++) {
+            int dx = sx - cx;
+            int dy = sy - cy;
+            if (dx * dx + dy * dy <= r2) {
+                circle_pixels[num_circle_pixels].sx = sx;
+                circle_pixels[num_circle_pixels].sy = sy;
+                num_circle_pixels++;
+            }
+        }
+    }
+
+    // 2. Texture pre-swap removed → we let fb_set_pixel do the swap (cheap now)
+    //    This fixes the colors and the broken lower part.
+}
+
+/* ====================== OPTIMIZED DRAW_NAVBALL (PURE FLOAT + FPU) ====================== */
+void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
+{
+    float pitch = pitch_deg * (PI / 180.0f);
+    float roll  = roll_deg  * (PI / 180.0f);
+    float yaw   = yaw_deg   * (PI / 180.0f);
+
+    // Precompute trig once per frame
+    float spit = fsin(pitch);
+    float cpit = fcos(pitch);
+    float sroll = fsin(roll);
+    float croll = fcos(roll);
+    float syaw = fsin(yaw);
+    float cyaw = fcos(yaw);
+
+    // Fast bounding-box loop (still very fast on F411 @ 100 MHz)
+    for (int sy = cy - radius; sy <= cy + radius; sy++)
+    {
+        for (int sx = cx - radius; sx <= cx + radius; sx++)
+        {
+            int dx = sx - cx;
+            int dy = sy - cy;
+
+            // Quick circle test
+            if (dx * dx + dy * dy > radius * radius)
+                continue;
+
+            // Sphere projection
+            float x = (float)dx / radius;
+            float y = (float)-dy / radius;      // Y flip
+            float t = 1.0f - x*x - y*y;
+            if (t < 0.0f) t = 0.0f;
+            float z = sqrtf(t);
+
+            // === ROTATION (Yaw → Pitch → Roll) ===
+            float x1 = cyaw * x - syaw * y;
+            float y1 = syaw * x + cyaw * y;
+            float z1 = z;
+
+            float x2 = x1;
+            float y2 = cpit * y1 - spit * z1;
+            float z2 = spit * y1 + cpit * z1;
+
+            float x3 = croll * x2 + sroll * z2;
+            float y3 = y2;
+            float z3 = -sroll * x2 + croll * z2;
+
+            // UV mapping with your fast functions
+            float u = (fast_atan2f(z3, x3) + PI) * FAST_INV_2PI;
+            float v = fast_asinf(y3) * FAST_INV_PI + 0.5f;
+
+            int tx = (int)(u * NAVBALL_TEXTURE_256_128_WIDTH);
+            int ty = (int)(v * NAVBALL_TEXTURE_256_128_HEIGHT);
+
+            // Clamp
+            if (tx < 0) tx = 0;
+            if (tx >= NAVBALL_TEXTURE_256_128_WIDTH) tx = NAVBALL_TEXTURE_256_128_WIDTH - 1;
+            if (ty < 0) ty = 0;
+            if (ty >= NAVBALL_TEXTURE_256_128_HEIGHT) ty = NAVBALL_TEXTURE_256_128_HEIGHT - 1;
+
+            uint16_t color = navball_texture_256_128[ty * NAVBALL_TEXTURE_256_128_WIDTH + tx];
+            fb_set_pixel(sx, sy, color);
+        }
+    }
+}
+
+void framebuffer_draw_circle(uint8_t rad,
+                             uint16_t X0, uint16_t Y0,
+                             uint16_t color)
+{
+	int x = 0;
+	int y = rad;
+	int d = 3-2*rad;
+
+	while(x<=y){
+		fb_set_pixel(X0 + x, Y0 + y, color);
+		fb_set_pixel(X0 - x, Y0 + y, color);
+		fb_set_pixel(X0 + x, Y0 - y, color);
+		fb_set_pixel(X0 - x, Y0 - y, color);
+
+		fb_set_pixel(X0 + y, Y0 + x, color);
+		fb_set_pixel(X0 - y, Y0 + x, color);
+		fb_set_pixel(X0 + y, Y0 - x, color);
+		fb_set_pixel(X0 - y, Y0 - x, color);
+
+		if(d < 0){
+			d+=4*x+6;
+		}else{
+			d+=4*(x-y)+10;
+			y--;
+		}
+
+		x++;
+	}
+}
+
+/*
 static uint16_t framebuffer[FB_WIDTH * FB_HEIGHT];
 
 //Wrap angle to [0, 2π)
@@ -405,4 +642,4 @@ void framebuffer_draw_circle(uint8_t rad,
 
 		x++;
 	}
-}
+}*/

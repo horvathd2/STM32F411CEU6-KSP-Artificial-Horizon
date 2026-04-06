@@ -170,7 +170,7 @@ int main(void)
 
 
 	int16_t pitch = 0;//300 * sin(HAL_GetTick() / 10);
-	int16_t roll = 0;//4 * fsin(HAL_GetTick() / 12.0);
+	int16_t roll = 4 * fsin(HAL_GetTick() / 12.0);
 	int16_t yaw = fmod(HAL_GetTick() / 20, 360);
 
 	if(!lcd_obj.busy){
