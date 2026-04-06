@@ -8,6 +8,7 @@
 #include "navball_texture_256_128.h"
 #include "main.h"
 #include "math.h"
+#include "fixed_point.h"
 
 static uint16_t framebuffer[FB_WIDTH * FB_HEIGHT];
 
@@ -176,14 +177,16 @@ const float cos_table[TABLE_SIZE] = {
 };
 
 //Wrap angle to [0, 2π)
-static float wrap_angle(float rad) {
+static float wrap_angle(float rad)
+{
     while (rad < 0) rad += 2 * PI;
     while (rad >= 2 * PI) rad -= 2 * PI;
     return rad;
 }
 
 // Sine lookup using table
-float fsin(float rad) {
+float fsin(float rad)
+{
     rad = wrap_angle(rad);
     int index = (int)(rad / STEP_RAD);
     if (index >= TABLE_SIZE) index = TABLE_SIZE - 1;
@@ -191,11 +194,46 @@ float fsin(float rad) {
 }
 
 // Cosine lookup using table
-float fcos(float rad) {
+float fcos(float rad)
+{
     rad = wrap_angle(rad);
     int index = (int)(rad / STEP_RAD);
     if (index >= TABLE_SIZE) index = TABLE_SIZE - 1;
     return cos_table[index];
+}
+
+float fast_atan2f(float y, float x)
+{
+    const float ONEQTR_PI = PI * 0.25f;
+    const float THREEQTR_PI = 3.0f * ONEQTR_PI;
+
+    float abs_y = fabsf(y) + 1e-10f;
+    float angle;
+
+    if (x < 0.0f)
+    {
+        float r = (x + abs_y) / (abs_y - x);
+        angle = THREEQTR_PI;
+        angle += (0.1963f * r * r - 0.9817f) * r;
+    }
+    else
+    {
+        float r = (x - abs_y) / (x + abs_y);
+        angle = ONEQTR_PI;
+        angle += (0.1963f * r * r - 0.9817f) * r;
+    }
+
+    return (y < 0.0f) ? -angle : angle;
+}
+
+float fast_asinf(float x)
+{
+    if (x > 1.0f) x = 1.0f;
+    if (x < -1.0f) x = -1.0f;
+
+    float x2 = x * x;
+
+    return x * (1.5707288f - 0.2121144f * x2 + 0.0742610f * x2 * x2);
 }
 
 static inline void fb_set_pixel(int x, int y, uint16_t color)
@@ -257,6 +295,88 @@ void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
     float roll  = roll_deg  * (PI / 180.0f);
     float yaw   = yaw_deg   * (PI / 180.0f);
 
+    // Precompute trig ONCE per frame (huge win)
+    fix16_t spit  = FLOAT_TO_FIX(fsin(pitch));
+    fix16_t cpit  = FLOAT_TO_FIX(fcos(pitch));
+
+	fix16_t sroll = FLOAT_TO_FIX(fsin(roll));
+	fix16_t croll = FLOAT_TO_FIX(fcos(roll));
+
+	fix16_t syaw  = FLOAT_TO_FIX(fsin(yaw));
+    fix16_t cyaw  = FLOAT_TO_FIX(fcos(yaw));
+
+    // Precompute inverse radius
+	fix16_t inv_radius = FLOAT_TO_FIX(1.0f / radius);
+
+	for (int sy_px = cy - radius; sy_px <= cy + radius; sy_px++)
+	{
+		for (int sx_px = cx - radius; sx_px <= cx + radius; sx_px++)
+		{
+			int dx = sx_px - cx;
+			int dy = sy_px - cy;
+
+			if (dx*dx + dy*dy > radius*radius)
+				continue;
+
+			// ================= FIXED-POINT SPHERE =================
+			fix16_t x = fix_mul(FLOAT_TO_FIX(dx), inv_radius);
+			fix16_t y = fix_mul(FLOAT_TO_FIX(-dy), inv_radius);
+
+			fix16_t xx = fix_mul(x, x);
+			fix16_t yy = fix_mul(y, y);
+
+			fix16_t t = FIX_ONE - xx - yy;
+			if (t < 0) t = 0;
+
+			// sqrt still float (acceptable)
+			float zf = sqrtf(FIX_TO_FLOAT(t));
+			fix16_t z = FLOAT_TO_FIX(zf);
+
+			// ================= ROTATION (FIXED-POINT) =================
+			// Yaw (Z)
+			fix16_t x1 = fix_mul(cyaw, x) - fix_mul(syaw, y);
+			fix16_t y1 = fix_mul(syaw, x) + fix_mul(cyaw, y);
+			fix16_t z1 = z;
+
+			// Pitch (X)
+			fix16_t x2 = x1;
+			fix16_t y2 = fix_mul(cpit, y1) - fix_mul(spit, z1);
+			fix16_t z2 = fix_mul(spit, y1) + fix_mul(cpit, z1);
+
+			// Roll (Y)
+			fix16_t x3 = fix_mul(croll, x2) + fix_mul(sroll, z2);
+			fix16_t y3 = y2;
+			fix16_t z3 = -fix_mul(sroll, x2) + fix_mul(croll, z2);
+
+			// ================= BACK TO FLOAT =================
+			float xf = FIX_TO_FLOAT(x3);
+			float yf = FIX_TO_FLOAT(y3);
+			float zf2 = FIX_TO_FLOAT(z3);
+
+			// ================= FAST UV =================
+			float u = (fast_atan2f(zf2, xf) + PI) * FAST_INV_2PI;
+			float v = fast_asinf(yf) * FAST_INV_PI + 0.5f;
+
+			// ================= TEXTURE =================
+			int tx = (int)(u * NAVBALL_TEXTURE_256_128_WIDTH);
+			int ty = (int)(v * NAVBALL_TEXTURE_256_128_HEIGHT);
+
+			if (tx < 0) tx = 0;
+			if (tx >= NAVBALL_TEXTURE_256_128_WIDTH)
+				tx = NAVBALL_TEXTURE_256_128_WIDTH - 1;
+
+			if (ty < 0) ty = 0;
+			if (ty >= NAVBALL_TEXTURE_256_128_HEIGHT)
+				ty = NAVBALL_TEXTURE_256_128_HEIGHT - 1;
+
+			uint16_t color =
+					navball_texture_256_128[ty * NAVBALL_TEXTURE_256_128_WIDTH + tx];
+
+			fb_set_pixel(sx_px, sy_px, color);
+		}
+	}
+
+    /*
     for (int sy = cy - radius; sy <= cy + radius; sy++) {
         for (int sx = cx - radius; sx <= cx + radius; sx++) {
 
@@ -279,8 +399,8 @@ void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
             rotate_vec(&x, &y, &z, pitch, roll, yaw);
 
             // Convert sphere -> texture coordinates (UV)
-            float u = (atan2f(z, x) + PI) / (2.0f * PI);
-            float v = (asin(y) / PI) + 0.5f;
+            float u = (fast_atan2f(z, x) + PI) / (2.0f * PI);
+            float v = (fast_asinf(y) / PI) + 0.5f;
 
             // Convert to texture indices
             int tx = (int)(u * NAVBALL_TEXTURE_256_128_WIDTH);
@@ -289,19 +409,20 @@ void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
             if (tx < 0) tx = 0;
             if (tx >= NAVBALL_TEXTURE_256_128_WIDTH) tx = NAVBALL_TEXTURE_256_128_WIDTH - 1;
             if (ty < 0) ty = 0;
-            if (ty >= NAVBALL_TEXTURE_256_128_WIDTH) ty = NAVBALL_TEXTURE_256_128_WIDTH - 1;
+            if (ty >= NAVBALL_TEXTURE_256_128_HEIGHT) ty = NAVBALL_TEXTURE_256_128_HEIGHT - 1;
 
             uint16_t color =
                 navball_texture_256_128[ty * NAVBALL_TEXTURE_256_128_WIDTH + tx];
 
             fb_set_pixel(sx, sy, color);
         }
-    }
+    }*/
 }
 
 void framebuffer_draw_circle(uint8_t rad,
                              uint16_t X0, uint16_t Y0,
-                             uint16_t color){
+                             uint16_t color)
+{
 	int x = 0;
 	int y = rad;
 	int d = 3-2*rad;

@@ -18,12 +18,16 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "st7735s.h"
 #include "trig_lookup_tables.h"
 #include "math.h"
+#include "usbd_cdc_if.h"
+#include "stdlib.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +37,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define PACKET_SIZE 			7
+#define EXPECTED_START_BYTE 	0xAA
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -46,6 +51,7 @@ SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_tx;
 
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
@@ -64,6 +70,17 @@ static void MX_USART1_UART_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 st7735s_t lcd_obj;
+
+typedef struct __attribute__((packed)){
+    uint8_t start_byte;
+    int16_t pitch;
+    int16_t roll;
+	int16_t yaw;
+}uart_packet;
+
+volatile uart_packet latest_packet;
+uint8_t rx_uart_dma[PACKET_SIZE];
+
 /* USER CODE END 0 */
 
 /**
@@ -98,14 +115,17 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
   lcd_obj = st7735s_create(&hspi1,
-     		  	  	  	(GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
-    					(GPIO_st7735s){LCD_RST_GPIO_Port, LCD_RST_Pin},
-    					(GPIO_st7735s){SPI1_CS_GPIO_Port, SPI1_CS_Pin});
+     		  	  	  	  (GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
+    					  (GPIO_st7735s){LCD_RST_GPIO_Port, LCD_RST_Pin},
+    					  (GPIO_st7735s){SPI1_CS_GPIO_Port, SPI1_CS_Pin});
 
   st7735s_init(&lcd_obj);
   st7735s_fill_screen(&lcd_obj, 0x0000);
+
+  HAL_UART_Receive_DMA(&huart1, rx_uart_dma, PACKET_SIZE);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -115,24 +135,53 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	//	pthread_mutex_lock(&uart_packet_mutex);
-	//	pitch = uartMsg.pitch;
-	//	roll = uartMsg.roll;
-	//	yaw = uartMsg.yaw;
-	//	pthread_mutex_unlock(&uart_packet_mutex);
+
+	/*
+	 *
+	 *  	IMPORTANT!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	 *  	IN ORDER TO NOT WASTE CPU CYCLES COMPUTING FRAMEBUFFEER
+	 *  	USING THE SAME PITCH ROLL YAW RECEIVED LAST TIME
+	 * 		USE A FLAG (DATA_READY) WHICH IS SET IN THE UART CALLBACK
+	 * 		WHEN GETTING NEW DATA.
+	 *
+	 * 		ESENTIALLY - IT COMPUTES A NEW FRAMEBUFFER ONLY WHEN
+	 * 		IT RECEIVES DATA ON USART (LOW POWER CONSUMPTION)
+	 *
+	 *
+	 * */
+
+	  /*    USABLE
+	uart_packet local_copy;
+
+	__disable_irq();
+	local_copy = latest_packet;
+	__enable_irq();
+
+	int16_t pitch = local_copy.pitch;
+	int16_t roll = local_copy.roll;
+	int16_t yaw = local_copy.yaw;
+	*/
 
 	float t = HAL_GetTick() / 1000.0f; // seconds
-	int16_t pitch = 30 * sinf(t);      // smaller angle
-	int16_t yaw   = fmodf(t*10, 360);
-	//int16_t pitch = 300 * sin(HAL_GetTick() / 10);
+	//int16_t pitch = 30 * sinf(t);      // smaller angle
+	//int16_t yaw   = fmodf(t*10, 360);
+	int16_t pitch = 300 * sin(HAL_GetTick() / 10);
 	int16_t roll = 0;//4 * fsin(HAL_GetTick() / 12.0);
-	//int16_t yaw = fmod(HAL_GetTick() / 20, 360);
+	int16_t yaw = fmod(HAL_GetTick() / 20, 360);
 
 	if(!lcd_obj.busy){
 		draw_navball(pitch, roll, yaw);
 		framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
 		st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
 	}
+
+	char buffertx[100];
+	//RAW DATA
+	//CDC_Transmit_FS(rx_uart_dma, strlen(rx_uart_dma));
+
+	//DATA SPLIT INTO PITCH/ROLL/YAW
+//	sprintf(buffertx, "P: %d, R: %d, Y: %d\n", pitch, roll, yaw);
+//	CDC_Transmit_FS((uint8_t *)buffertx, strlen(buffertx));
 
 	HAL_Delay(10);
   }
@@ -161,8 +210,8 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 15;
-  RCC_OscInitStruct.PLL.PLLN = 96;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 144;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = 5;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -178,7 +227,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -265,6 +314,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
   /* DMA2_Stream3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
@@ -308,6 +360,19 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == lcd_obj.st7735s_spi) {
     	st7735s_dma_tx_complete(&lcd_obj);
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        if (rx_uart_dma[0] == EXPECTED_START_BYTE)
+        {
+            memcpy((void*)&latest_packet, rx_uart_dma, sizeof(uart_packet));
+            //new_data_ready = 1;
+
+        }
     }
 }
 /* USER CODE END 4 */

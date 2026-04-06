@@ -11,28 +11,33 @@
 #include "stdint.h"
 #include "main.h"
 
+#define ASIN_LUT_SIZE 		256
 #define TABLE_SIZE          630
 #define MAX_NAVBALL_POINTS  500
 
 #define COLOR565_GRAY   0x8080
 #define COLOR565_BLACK  0x0000
 
-#define cx      64
-#define cy      80
-#define radius  60
+#define cx      		64
+#define cy      		80
+#define radius  		60
 
-#define FB_WIDTH   128
-#define FB_HEIGHT  160
+#define FB_WIDTH   		128
+#define FB_HEIGHT  		160
 
-#define DEG_TO_RAD  0.017453292519943295
-#define PI		    3.141592653589793238
-#define STEP_RAD    (2 * PI / TABLE_SIZE)
+#define DEG_TO_RAD  	0.017453292519943295f
+#define PI		    	3.141592653589793238f
+#define STEP_RAD    	(2 * PI / TABLE_SIZE)
+#define FAST_INV_PI    	0.318309886f
+#define FAST_INV_2PI   	0.159154943f
 
 extern const float sin_table[TABLE_SIZE];
 extern const float cos_table[TABLE_SIZE];
 
 float fsin(float rad);
 float fcos(float rad);
+float fast_atan2f(float y, float x);
+float fast_asinf(float x);
 
 void fb_clear(uint16_t color);
 
