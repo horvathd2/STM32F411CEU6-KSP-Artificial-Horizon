@@ -10,8 +10,6 @@
 #include "math.h"
 #include "fixed_point.h"
 
-static uint16_t framebuffer[FB_WIDTH * FB_HEIGHT];
-
 const float sin_table[TABLE_SIZE] = {
           0.0f,      0.01f,  0.019999f,  0.029996f,  0.039989f,  0.049979f,  0.059964f,  0.069943f,
      0.079915f,  0.089879f,  0.099833f,  0.109778f,  0.119712f,  0.129634f,  0.139543f,  0.149438f,
@@ -176,6 +174,8 @@ const float cos_table[TABLE_SIZE] = {
      0.999068f,  0.999449f,  0.999731f,  0.999913f,  0.999995f,  0.999977f
 };
 
+static uint16_t framebuffer[FB_WIDTH * FB_HEIGHT];
+
 //Wrap angle to [0, 2π)
 static float wrap_angle(float rad)
 {
@@ -291,9 +291,9 @@ static void rotate_vec(float *x, float *y, float *z,
 
 void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
 {
-    float pitch = pitch_deg * (PI / 180.0f);
-    float roll  = roll_deg  * (PI / 180.0f);
-    float yaw   = yaw_deg   * (PI / 180.0f);
+    float pitch = pitch_deg * DEG_TO_RAD;
+    float roll  = roll_deg  * DEG_TO_RAD;
+    float yaw   = yaw_deg   * DEG_TO_RAD;
 
     // Precompute trig ONCE per frame (huge win)
     fix16_t spit  = FLOAT_TO_FIX(fsin(pitch));
@@ -375,48 +375,6 @@ void draw_navball(float pitch_deg, float roll_deg, float yaw_deg)
 			fb_set_pixel(sx_px, sy_px, color);
 		}
 	}
-
-    /*
-    for (int sy = cy - radius; sy <= cy + radius; sy++) {
-        for (int sx = cx - radius; sx <= cx + radius; sx++) {
-
-            int dx = sx - cx;
-            int dy = sy - cy;
-
-            // Check if inside circle
-            if (dx*dx + dy*dy > radius*radius)
-                continue;
-
-            // Convert to normalized sphere coords
-            // x^2 + y^2 + z^2 = 1
-            float x = dx / (float)radius;
-            float y = -dy / (float)radius;  // flip Y (screen coords)
-            float t = 1.0f - x*x - y*y;
-            if (t < 0) t = 0;
-            float z = sqrtf(t);
-
-            // rotate sphere point
-            rotate_vec(&x, &y, &z, pitch, roll, yaw);
-
-            // Convert sphere -> texture coordinates (UV)
-            float u = (fast_atan2f(z, x) + PI) / (2.0f * PI);
-            float v = (fast_asinf(y) / PI) + 0.5f;
-
-            // Convert to texture indices
-            int tx = (int)(u * NAVBALL_TEXTURE_256_128_WIDTH);
-            int ty = (int)(v * NAVBALL_TEXTURE_256_128_HEIGHT);
-
-            if (tx < 0) tx = 0;
-            if (tx >= NAVBALL_TEXTURE_256_128_WIDTH) tx = NAVBALL_TEXTURE_256_128_WIDTH - 1;
-            if (ty < 0) ty = 0;
-            if (ty >= NAVBALL_TEXTURE_256_128_HEIGHT) ty = NAVBALL_TEXTURE_256_128_HEIGHT - 1;
-
-            uint16_t color =
-                navball_texture_256_128[ty * NAVBALL_TEXTURE_256_128_WIDTH + tx];
-
-            fb_set_pixel(sx, sy, color);
-        }
-    }*/
 }
 
 void framebuffer_draw_circle(uint8_t rad,

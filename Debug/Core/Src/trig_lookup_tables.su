@@ -9,4 +9,4 @@
 ../Core/Src/trig_lookup_tables.c:256:11:horizon_get_framebuffer	4	static
 ../Core/Src/trig_lookup_tables.c:261:13:rotate_vec	64	static
 ../Core/Src/trig_lookup_tables.c:292:6:draw_navball	184	static
-../Core/Src/trig_lookup_tables.c:422:6:framebuffer_draw_circle	40	static
+../Core/Src/trig_lookup_tables.c:380:6:framebuffer_draw_circle	40	static

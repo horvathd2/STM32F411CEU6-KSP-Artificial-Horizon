@@ -18,14 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "st7735s.h"
 #include "trig_lookup_tables.h"
 #include "math.h"
-#include "usbd_cdc_if.h"
 #include "stdlib.h"
 #include "string.h"
 /* USER CODE END Includes */
@@ -115,7 +113,6 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
-  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
   lcd_obj = st7735s_create(&hspi1,
      		  	  	  	  (GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
@@ -124,6 +121,7 @@ int main(void)
 
   st7735s_init(&lcd_obj);
   st7735s_fill_screen(&lcd_obj, 0x0000);
+  framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
 
   HAL_UART_Receive_DMA(&huart1, rx_uart_dma, PACKET_SIZE);
   /* USER CODE END 2 */
@@ -150,7 +148,7 @@ int main(void)
 	 *
 	 * */
 
-	  /*    USABLE
+	/*-----USABLE------
 	uart_packet local_copy;
 
 	__disable_irq();
@@ -160,30 +158,27 @@ int main(void)
 	int16_t pitch = local_copy.pitch;
 	int16_t roll = local_copy.roll;
 	int16_t yaw = local_copy.yaw;
-	*/
 
-	float t = HAL_GetTick() / 1000.0f; // seconds
-	//int16_t pitch = 30 * sinf(t);      // smaller angle
-	//int16_t yaw   = fmodf(t*10, 360);
-	int16_t pitch = 300 * sin(HAL_GetTick() / 10);
+	char buffertx[100];
+	//RAW DATA
+	CDC_Transmit_FS(rx_uart_dma, strlen(rx_uart_dma));
+
+	//DATA SPLIT INTO PITCH/ROLL/YAW
+	sprintf(buffertx, "P: %d, R: %d, Y: %d\n", pitch, roll, yaw);
+	CDC_Transmit_FS((uint8_t *)buffertx, strlen(buffertx));
+	-------------------*/
+
+
+	int16_t pitch = 0;//300 * sin(HAL_GetTick() / 10);
 	int16_t roll = 0;//4 * fsin(HAL_GetTick() / 12.0);
 	int16_t yaw = fmod(HAL_GetTick() / 20, 360);
 
 	if(!lcd_obj.busy){
 		draw_navball(pitch, roll, yaw);
-		framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
 		st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
 	}
 
-	char buffertx[100];
-	//RAW DATA
-	//CDC_Transmit_FS(rx_uart_dma, strlen(rx_uart_dma));
-
-	//DATA SPLIT INTO PITCH/ROLL/YAW
-//	sprintf(buffertx, "P: %d, R: %d, Y: %d\n", pitch, roll, yaw);
-//	CDC_Transmit_FS((uint8_t *)buffertx, strlen(buffertx));
-
-	HAL_Delay(10);
+	HAL_Delay(5);
   }
   /* USER CODE END 3 */
 }
@@ -209,10 +204,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 15;
-  RCC_OscInitStruct.PLL.PLLN = 144;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 5;
+  RCC_OscInitStruct.PLL.PLLM = 25;
+  RCC_OscInitStruct.PLL.PLLN = 200;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -227,7 +222,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
