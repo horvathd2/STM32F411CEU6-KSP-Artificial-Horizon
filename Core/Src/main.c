@@ -78,7 +78,7 @@ typedef struct __attribute__((packed)){
 
 volatile uart_packet latest_packet;
 uint8_t rx_uart_dma[PACKET_SIZE];
-
+volatile uint8_t data_ready = 0;
 /* USER CODE END 0 */
 
 /**
@@ -114,6 +114,7 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  HAL_UART_Receive_DMA(&huart1, rx_uart_dma, PACKET_SIZE);
   lcd_obj = st7735s_create(&hspi1,
      		  	  	  	  (GPIO_st7735s){LCD_DC_GPIO_Port, LCD_DC_Pin},
     					  (GPIO_st7735s){LCD_RST_GPIO_Port, LCD_RST_Pin},
@@ -122,8 +123,10 @@ int main(void)
   st7735s_init(&lcd_obj);
   st7735s_fill_screen(&lcd_obj, 0x0000);
   framebuffer_draw_circle(radius+1, cx, cy, 0x07E0);
-
-  HAL_UART_Receive_DMA(&huart1, rx_uart_dma, PACKET_SIZE);
+  if(!lcd_obj.busy){
+	draw_navball(0, 0, 0);
+	st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -148,34 +151,32 @@ int main(void)
 	 *
 	 * */
 
-	/*-----USABLE------
-	uart_packet local_copy;
+	//int16_t pitch = 0;//300 * sin(HAL_GetTick() / 10);
+	//int16_t roll = 4 * fsin(HAL_GetTick() / 12.0);
+	//int16_t yaw = fmod(HAL_GetTick() / 20, 360);
 
-	__disable_irq();
-	local_copy = latest_packet;
-	__enable_irq();
+	if (data_ready)
+	{
+		data_ready = 0;
 
-	int16_t pitch = local_copy.pitch;
-	int16_t roll = local_copy.roll;
-	int16_t yaw = local_copy.yaw;
+		// Atomic copy (prevents tearing if ISR fires during copy)
+		__disable_irq();
+		uart_packet local_copy = latest_packet;
+		__enable_irq();
 
-	char buffertx[100];
-	//RAW DATA
-	CDC_Transmit_FS(rx_uart_dma, strlen(rx_uart_dma));
+		int16_t pitch = local_copy.pitch;
+		int16_t roll  = local_copy.roll;
+		int16_t yaw   = local_copy.yaw;
 
-	//DATA SPLIT INTO PITCH/ROLL/YAW
-	sprintf(buffertx, "P: %d, R: %d, Y: %d\n", pitch, roll, yaw);
-	CDC_Transmit_FS((uint8_t *)buffertx, strlen(buffertx));
-	-------------------*/
+		if(!lcd_obj.busy){
+			draw_navball(pitch, roll, yaw);
+			st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
+		}
 
-
-	int16_t pitch = 0;//300 * sin(HAL_GetTick() / 10);
-	int16_t roll = 4 * fsin(HAL_GetTick() / 12.0);
-	int16_t yaw = fmod(HAL_GetTick() / 20, 360);
-
-	if(!lcd_obj.busy){
-		draw_navball(pitch, roll, yaw);
-		st7735s_push_framebuffer_dma(&lcd_obj, horizon_get_framebuffer(), FB_WIDTH, FB_HEIGHT);
+		// Example debug (remove or keep only for testing)
+		//char buffertx[100];
+		//sprintf(buffertx, "P: %d, R: %d, Y: %d\n", pitch, roll, yaw);
+		//CDC_Transmit_FS((uint8_t *)buffertx, strlen(buffertx));
 	}
 
 	HAL_Delay(5);
@@ -282,7 +283,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 9600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -362,12 +363,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
+        // Validate packet and store latest data
         if (rx_uart_dma[0] == EXPECTED_START_BYTE)
         {
-            memcpy((void*)&latest_packet, rx_uart_dma, sizeof(uart_packet));
-            //new_data_ready = 1;
-
+            latest_packet = *(uart_packet*)rx_uart_dma;   // packed struct copy
+            data_ready = 1;
         }
+        // Always restart DMA (even on bad packet) so we never miss data
+        HAL_UART_Receive_DMA(&huart1, rx_uart_dma, PACKET_SIZE);
     }
 }
 /* USER CODE END 4 */
